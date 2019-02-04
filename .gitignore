@@ -1,0 +1,9 @@
+
+*.zip
+*.db
+*.exe
+*.pdb
+*.iobj
+*.ilk
+*.ipdb
+*.ipch
