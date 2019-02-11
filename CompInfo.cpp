@@ -14,38 +14,33 @@
  
 using namespace std;
 
-string get_comp_name()
-{
-	char boof[16];
-	DWORD nsize = sizeof(boof);
-	if (!GetComputerNameA(boof, &nsize)) {
-		cout << "func. get_comp_name: error at GetComputerNameA()";
-		return string("error");
-	}
-	return string(boof);
-}
-
+//returns values to &hostname and &ip_list
 bool get_name_and_ips(string &hostname,vector<string> &ip_list)
 {
+	//getting PC name
 	char ac[80];
+	//https://docs.microsoft.com/en-us/windows/desktop/api/winsock/nf-winsock-gethostname
 	if (gethostname(ac, sizeof(ac)) == SOCKET_ERROR) {
 		cerr << "Error " << WSAGetLastError() <<
 			" when getting local host name." << endl;
 		return 1;
 	}
-	cout << "Host name is " << ac << "." << endl;
+	std::cout << "Host name is " << ac << "." << endl;
 	hostname = ac;
 
+	//getting hostent structure (contains ip_addr_list)
+	//https://docs.microsoft.com/en-us/windows/desktop/api/wsipv6ok/nf-wsipv6ok-gethostbyname
 	struct hostent *phe = gethostbyname(ac);
 	if (phe == 0) {
 		cerr << "Bad host lookup." << endl;
 		return false;
 	}
-	string a = phe->h_name;
+
+	//parsing ip_addr_list
 	for (int i = 0; phe->h_addr_list[i] != 0; ++i) {
 		struct in_addr addr;
 		memcpy(&addr, phe->h_addr_list[i], sizeof(struct in_addr));
-		cout << "Address " << i << ": " << inet_ntoa(addr) << endl;
+		std::cout << "Address " << i << ": " << inet_ntoa(addr) << endl;
 		ip_list.push_back(inet_ntoa(addr));
 	}
 
@@ -69,14 +64,18 @@ struct SysInfo{
 		}
 		fout << this->win_version << endl << this->office_version;
 
-		cout << "saved to " << filename << endl;
+		std::cout << "saved to " << filename << endl;
 	}
 };
 
+//returns the Windows version, bit depth, service pack and build to &win_version
 void get_win_version(string &win_version)
 {
-	//Version
+	//getting Windows version 
+	//https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-rtlgetversion
 	NTSTATUS(WINAPI *RtlGetVersion)(LPOSVERSIONINFOEXW);
+	
+	//OSVERSIONINFOEXW contains dwMajorVersion, dwMinorVersion, dwBuildNumber, szCSDVersion (SP)
 	OSVERSIONINFOEXW osInfo;
 
 	*(FARPROC*)&RtlGetVersion = GetProcAddress(GetModuleHandleA("ntdll"), "RtlGetVersion");
@@ -86,31 +85,36 @@ void get_win_version(string &win_version)
 		osInfo.dwOSVersionInfoSize = sizeof(osInfo);
 		RtlGetVersion(&osInfo);
 	}
+	
+	//check for Service Pack
 	std::wstring sp(osInfo.szCSDVersion);
 	if (!sp.empty())
 		sp.insert(sp.begin(),' ');
 
+	//parse the Windows version
+	//The following table summarizes the most recent operating system version numbers:
+	//https://docs.microsoft.com/ru-ru/windows/desktop/SysInfo/operating-system-version
 	switch (osInfo.dwMajorVersion)
 	{
 	case 5:
-		if (osInfo.dwMinorVersion == 0)
+		if (osInfo.dwMinorVersion == 0)//win 5.0
 			win_version = "Windows 2000 build " + to_string(osInfo.dwBuildNumber);
-		else if (osInfo.dwMinorVersion == 1)
+		else if (osInfo.dwMinorVersion == 1)//win 5.1
 				win_version = "Windows XP x32 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
-			 else
+			 else //win 5.2
 				win_version = "Windows XP x64 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
 			 return;
 	case 6:
-		if (osInfo.dwMinorVersion == 0)
+		if (osInfo.dwMinorVersion == 0)//win 6.0
 			win_version = "Windows Vista ";
-		else if (osInfo.dwMinorVersion == 1)
+		else if (osInfo.dwMinorVersion == 1)//win 6.1
 			win_version = "Windows 7 ";
-		else if (osInfo.dwMinorVersion == 2)
+		else if (osInfo.dwMinorVersion == 2)//win 6.2
 			win_version = "Windows 8 ";
-		else
+		else //win 6.3
 			win_version = "Windows 8.1 ";
 		break;
-	case 10:
+	case 10://win 10.0
 		win_version = "Windows 10 ";
 			break;
 	default:
@@ -121,8 +125,9 @@ void get_win_version(string &win_version)
 		break;
 	}
 	
-	//bit_deph
-	_SYSTEM_INFO  sysinf;
+	//getting Windows bit deph
+	_SYSTEM_INFO  sysinf;//contains wProcessorArchitecture
+	//https://docs.microsoft.com/en-us/windows/desktop/api/sysinfoapi/nf-sysinfoapi-getnativesysteminfo
 	GetNativeSystemInfo(&sysinf);
 	string bit_deph;
 	switch (sysinf.wProcessorArchitecture)
@@ -146,25 +151,31 @@ void get_win_version(string &win_version)
 		bit_deph = "Unknown architecture";
 		break;
 	}
+
 	win_version += bit_deph + string(sp.begin(),sp.end()) + " build "+ to_string(osInfo.dwBuildNumber);
-	cout << win_version << endl;
+	std::cout << win_version << endl;
 }
 
+//returns the Microsoft Office version and its bitness(in future) to &office_version
 void get_office_version(string &office_version)
 {
-	enum OfficeVer {
+	enum OfficeVer {//from http://qaru.site/questions/102009/how-to-detect-installed-version-of-ms-office
 		Office97 = 7, Office98 = 8, Office2000 = 9, OfficeXP = 10,
 		Office2003 = 11, Office2007 = 12, Office2010 = 14, Office2013 = 15, Office2016 = 16};
 	try {	
 		HKEY rKey;
+		//https://docs.microsoft.com/en-us/windows/desktop/api/winreg/nf-winreg-regopenkeya
 		if (RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Office", &rKey) != ERROR_SUCCESS)
-			throw(string("Не удалось открыть ключ реестра"));
+			throw(string("Не удалось открыть ключ реестра HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Office"));
 
-		char name[512];
+		char name[512];//current registry key name
 		DWORD boofsize = sizeof(name);
 		int index = 0;
+		//https://docs.microsoft.com/en-us/windows/desktop/api/winreg/nf-winreg-regenumkeyexa
 		while (RegEnumKeyExA(rKey, index++, name, &boofsize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
 		{
+			//getting bit_deph
+			//https://stackoverflow.com/questions/2203980/detect-whether-office-is-32bit-or-64bit-via-the-registry
 			//string path = "Software\\Microsoft\\Office\\" + string(name) + "\\Outlook";
 			//HKEY Office_rKey;
 			//if (RegOpenKeyA(HKEY_LOCAL_MACHINE, path.c_str(), &Office_rKey) != ERROR_SUCCESS)
@@ -175,7 +186,8 @@ void get_office_version(string &office_version)
 			if (RegQueryValueExA(Office_rKey, "Bitness",NULL,NULL,&bitness,&boofbitness) != ERROR_SUCCESS) {
 				RegCloseKey(Office_rKey);
 				continue;}*/
-			switch (atoi(name))
+			switch (atoi(name))//atoi is very bad function to convert string name to int... 
+				//TODO:Use a more secure method
 			{
 			case Office2016:
 				office_version = "Microsoft Office 2016";
@@ -207,7 +219,7 @@ void get_office_version(string &office_version)
 			default:
 				break;
 			}
-			if (!office_version.empty()) {
+			if (!office_version.empty()) {//MC office found
 				RegCloseKey(rKey);
 				break;}
 		}
@@ -215,21 +227,23 @@ void get_office_version(string &office_version)
 	catch (string err)
 	{
 		office_version = "Ошибка чтения реестра";
-		cout << err;
+		std::cout << err;
 		return;
 	}
 	if (office_version.empty())
 		office_version = "Microsoft Office отсутствует";
-	cout << office_version << endl;
+	std::cout << office_version << endl;
 }
 
 int main()
 {	
 	setlocale(LC_ALL, "");
+	
 	WSAData wsaData;
+	//WinSock initialization
 	if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0) {
 		int err = WSAGetLastError();
-		cout << "socket_error " << err;
+		std::cout << "socket_error " << err;
 		return err;
 	}
 
@@ -237,7 +251,7 @@ int main()
 	if (!get_name_and_ips(info.hostname,info.ip_list))
 		return 1;
 
-	WSACleanup();
+	WSACleanup();//WinSock terminate
 
 	get_win_version(info.win_version);
 
