@@ -8,11 +8,11 @@
 #include <string>
 #include <vector>
 #include <fstream>
-//#include <winsock.h>
-//#pragma comment(lib, "Wsock32.lib")
 #pragma comment(lib, "ws2_32.lib")
  
 using namespace std;
+#define MAX_KEY_LENGTH 255
+#define MAX_VALUE_NAME 16383
 
 //returns values to &hostname and &ip_list
 bool get_name_and_ips(string &hostname,vector<string> &ip_list)
@@ -52,6 +52,7 @@ struct SysInfo{
 	vector<string>ip_list;
 	string win_version;
 	string office_version;
+	string antivirus;
 
 	void export_to_file()
 	{
@@ -62,7 +63,7 @@ struct SysInfo{
 		for (const auto &i : this->ip_list) {
 			fout << i << endl;
 		}
-		fout << this->win_version << endl << this->office_version;
+		fout << this->win_version << endl << this->office_version << endl << this->antivirus;
 
 		std::cout << "saved to " << filename << endl;
 	}
@@ -156,83 +157,88 @@ void get_win_version(string &win_version)
 	std::cout << win_version << endl;
 }
 
-//returns the Microsoft Office version and its bitness(in future) to &office_version
-void get_office_version(string &office_version)
-{
-	enum OfficeVer {//from http://qaru.site/questions/102009/how-to-detect-installed-version-of-ms-office
-		Office97 = 7, Office98 = 8, Office2000 = 9, OfficeXP = 10,
-		Office2003 = 11, Office2007 = 12, Office2010 = 14, Office2013 = 15, Office2016 = 16};
-	try {	
-		HKEY rKey;
-		//https://docs.microsoft.com/en-us/windows/desktop/api/winreg/nf-winreg-regopenkeya
-		if (RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Office", &rKey) != ERROR_SUCCESS)
-			throw(string("Не удалось открыть ключ реестра HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Office"));
-
-		char name[512];//current registry key name
-		DWORD boofsize = sizeof(name);
-		int index = 0;
-		//https://docs.microsoft.com/en-us/windows/desktop/api/winreg/nf-winreg-regenumkeyexa
-		while (RegEnumKeyExA(rKey, index++, name, &boofsize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
-		{
-			//getting bit_deph
-			//https://stackoverflow.com/questions/2203980/detect-whether-office-is-32bit-or-64bit-via-the-registry
-			//string path = "Software\\Microsoft\\Office\\" + string(name) + "\\Outlook";
-			//HKEY Office_rKey;
-			//if (RegOpenKeyA(HKEY_LOCAL_MACHINE, path.c_str(), &Office_rKey) != ERROR_SUCCESS)
-			//	continue;
-			
-			/*byte bitness;
-			DWORD boofbitness = sizeof(bitness);
-			if (RegQueryValueExA(Office_rKey, "Bitness",NULL,NULL,&bitness,&boofbitness) != ERROR_SUCCESS) {
-				RegCloseKey(Office_rKey);
-				continue;}*/
-			switch (atoi(name))//atoi is very bad function to convert string name to int... 
-				//TODO:Use a more secure method
-			{
-			case Office2016:
-				office_version = "Microsoft Office 2016";
-				break;
-			case Office2013:
-				office_version = "Microsoft Office 2013";
-				break;
-			case Office2010:
-				office_version = "Microsoft Office 2010";
-				break;
-			case Office2007:
-				office_version = "Microsoft Office 2007";
-				break;
-			case Office2003:
-				office_version = "Microsoft Office 2003";
-				break;
-			case OfficeXP:
-				office_version = "Microsoft Office XP";
-				break;
-			case Office2000:
-				office_version = "Microsoft Office 2000";
-				break;
-			case Office98:
-				office_version = "Microsoft Office 98";
-				break;
-			case Office97:
-				office_version = "Microsoft Office 97";
-				break;
-			default:
-				break;
-			}
-			if (!office_version.empty()) {//MC office found
-				RegCloseKey(rKey);
-				break;}
-		}
-	}
-	catch (string err)
+//returns the Microsoft Office version and its bitness + Kaspersky antivirus info
+void get_office_and_kaspersky_version(string &office_version, string &kaspersky_info){
+	HKEY hKey;
+	if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, TEXT("SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
 	{
-		office_version = "Ошибка чтения реестра";
-		std::cout << err;
+		cout << "Ошибка чтения реестра\n";
+		office_version = "Ошибка office_version";
+		kaspersky_info = "Ошибка kaspersky_info";
 		return;
 	}
-	if (office_version.empty())
-		office_version = "Microsoft Office отсутствует";
-	std::cout << office_version << endl;
+	
+	DWORD    cSubKeys = 0;               // number of subkeys 
+	
+	DWORD retCode;
+	// Get the class name and the value count. 
+	retCode = RegQueryInfoKey(
+		hKey,                    // key handle 
+		NULL,                // buffer for class name 
+		NULL,           // size of class string 
+		NULL,                    // reserved 
+		&cSubKeys,               // number of subkeys 
+		NULL,            // longest subkey size 
+		NULL,            // longest class string 
+		NULL,                // number of values for this key 
+		NULL,            // longest value name 
+		NULL,         // longest value data 
+		NULL,   // security descriptor 
+		NULL);       // last write time 
+
+	if (cSubKeys)
+	{
+		bool is_office_found = false;
+		bool is_kasper_found = false;
+		for (DWORD i = 0; i < cSubKeys; i++)
+		{
+			char achKey[MAX_KEY_LENGTH];   // buffer for subkey name
+			DWORD cbName = sizeof(achKey);
+
+			if (RegEnumKeyExA(hKey, i, achKey, &cbName, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
+			{
+				char achValue[MAX_KEY_LENGTH];
+				DWORD cchValue = MAX_VALUE_NAME;
+
+				if (RegGetValueA(hKey, achKey, "DisplayName", RRF_RT_REG_SZ, NULL, achValue, &cchValue) == ERROR_SUCCESS)
+				{
+					string progName(achValue);
+					if (!is_office_found&&progName.find("Microsoft Office") != std::string::npos)
+					{
+						office_version = achValue;
+						if (RegGetValueA(hKey, achKey, "InstallLocation", RRF_RT_REG_SZ, NULL, achValue, &cchValue) == ERROR_SUCCESS) {
+							string progPath(achValue);
+							if (progPath.find("(x86)") != std::string::npos)
+								office_version += " x32";
+							else
+								office_version += " x64";
+							is_office_found = true;
+							continue;
+						}
+					}
+					if (!is_kasper_found&&progName.find("Kaspersky") != std::string::npos)
+					{
+						kaspersky_info = achValue;
+						is_kasper_found = true;
+					}
+				}		
+			}
+		}
+
+		if (!office_version.empty())
+			cout << office_version << endl;
+		else{
+			office_version = "Microsoft Office отсутствует";
+			cout << office_version << endl;
+		}
+		if (!kaspersky_info.empty())
+			cout << kaspersky_info << endl;
+		else {
+			kaspersky_info = "Kaspersky Antivirus отсутствует";
+			cout << kaspersky_info << endl;
+		}
+	}
+	RegCloseKey(hKey);
 }
 
 int main()
@@ -255,7 +261,7 @@ int main()
 
 	get_win_version(info.win_version);
 
-	get_office_version(info.office_version);
+	get_office_and_kaspersky_version(info.office_version, info.antivirus);
 
 	info.export_to_file();
 
