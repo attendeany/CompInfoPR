@@ -92,6 +92,15 @@ void get_win_version(string &win_version)
 	if (!sp.empty())
 		sp.insert(sp.begin(),' ');
 
+	//Windows edition
+	string winEdition = "";
+	char edition[255];
+	DWORD ed_size = sizeof(edition);
+	if (RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "EditionID", RRF_RT_REG_SZ, NULL, edition, &ed_size) == ERROR_SUCCESS) {
+		winEdition = edition;
+		winEdition += ' ';
+	}
+
 	//parse the Windows version
 	//The following table summarizes the most recent operating system version numbers:
 	//https://docs.microsoft.com/ru-ru/windows/desktop/SysInfo/operating-system-version
@@ -99,11 +108,11 @@ void get_win_version(string &win_version)
 	{
 	case 5:
 		if (osInfo.dwMinorVersion == 0)//win 5.0
-			win_version = "Windows 2000 build " + to_string(osInfo.dwBuildNumber);
+			win_version = "Windows 2000 "+winEdition+"build " + to_string(osInfo.dwBuildNumber);
 		else if (osInfo.dwMinorVersion == 1)//win 5.1
-				win_version = "Windows XP x32 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
+				win_version = "Windows XP "+ winEdition + "x32 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
 			 else //win 5.2
-				win_version = "Windows XP x64 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
+				win_version = "Windows XP " + winEdition + "x64 build " + string(sp.begin(), sp.end()) + ' ' + to_string(osInfo.dwBuildNumber);
 			 return;
 	case 6:
 		if (osInfo.dwMinorVersion == 0)//win 6.0
@@ -153,7 +162,7 @@ void get_win_version(string &win_version)
 		break;
 	}
 
-	win_version += bit_deph + string(sp.begin(),sp.end()) + " build "+ to_string(osInfo.dwBuildNumber);
+	win_version += winEdition + bit_deph + string(sp.begin(),sp.end()) + " build "+ to_string(osInfo.dwBuildNumber);
 	std::cout << win_version << endl;
 }
 
@@ -186,6 +195,8 @@ void get_office_and_kaspersky_version(string &office_version, string &kaspersky_
 		NULL,   // security descriptor 
 		NULL);       // last write time 
 
+	string first_office="";
+
 	if (cSubKeys)
 	{
 		bool is_office_found = false;
@@ -205,21 +216,46 @@ void get_office_and_kaspersky_version(string &office_version, string &kaspersky_
 					string progName(achValue);
 					if (!is_office_found&&progName.find("Microsoft Office") != std::string::npos)
 					{
-						office_version = achValue;
+						first_office = achValue;
+
 						if (RegGetValueA(hKey, achKey, "InstallLocation", RRF_RT_REG_SZ, NULL, achValue, &cchValue) == ERROR_SUCCESS) {
 							string progPath(achValue);
 							if (progPath.find("(x86)") != std::string::npos)
-								office_version += " x32";
+								first_office += " x32";
 							else
-								office_version += " x64";
-							is_office_found = true;
-							continue;
+								first_office += " x64";
 						}
+						string products[3] = { "рофессиональный","ля дома","тандартный" };
+						
+						for (int i = 0; i < 3; i++)
+						{
+							if (progName.find(products[i]) != std::string::npos)
+							{
+								office_version = first_office;
+								is_office_found = true;
+								break;
+							}
+						}
+						continue;						
 					}
 					if (!is_kasper_found&&progName.find("Kaspersky") != std::string::npos)
 					{
-						kaspersky_info = achValue;
-						is_kasper_found = true;
+						string products[7] = {"Endpoint Security","Small Office Security",
+						"Embedded Systems Security","Total Security","Anti-Virus",
+						"Internet Security","Free"};
+						for (int i = 0; i < 7; i++)
+						{
+							if (progName.find(products[i]) != std::string::npos)
+							{
+								kaspersky_info = achValue;
+								
+								if (RegGetValueA(hKey, achKey, "DisplayVersion", RRF_RT_REG_SZ, NULL, achValue, &cchValue) == ERROR_SUCCESS)
+									kaspersky_info += ' '+string(achValue);
+								
+								is_kasper_found = true;
+								break;
+							}
+						}											
 					}
 				}		
 			}
@@ -228,7 +264,10 @@ void get_office_and_kaspersky_version(string &office_version, string &kaspersky_
 		if (!office_version.empty())
 			cout << office_version << endl;
 		else{
-			office_version = "Microsoft Office отсутствует";
+			if (!first_office.empty())
+				office_version = first_office;
+			else
+				office_version = "Microsoft Office отсутствует";
 			cout << office_version << endl;
 		}
 		if (!kaspersky_info.empty())
